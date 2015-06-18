@@ -1,0 +1,1026 @@
+■00: CentOS 7 初期設定
+□インストール時の設定はこんな(Controller, Hypervisor共通)
+[root@osc ~]# cat anaconda-ks.cfg
+#version=RHEL7
+# System authorization information
+auth --enableshadow --passalgo=sha512
+
+# Use CDROM installation media
+cdrom
+# Use graphical install
+graphical
+# Run the Setup Agent on first boot
+firstboot --enable
+ignoredisk --only-use=sda
+# Keyboard layouts
+keyboard --vckeymap=jp --xlayouts='jp'
+# System language
+lang ja_JP.UTF-8
+
+# Network information
+network  --bootproto=dhcp --device=enp0s3 --onboot=off --ipv6=auto
+network  --bootproto=dhcp --device=enp0s8 --onboot=off --ipv6=auto
+network  --bootproto=dhcp --device=enp0s9 --onboot=off --ipv6=auto
+network  --hostname=localhost.localdomain
+# Root password
+rootpw --iscrypted $6$tnO.FHJF2hnWj4WQ$jOTPzLUrLTbBrCIQWBq25BTx6mc4iMiIT8dpGm0lc0r0aROgNxRmX5NTPIx035v6rvkgQ
+# System timezone
+timezone Asia/Tokyo --isUtc
+# System bootloader configuration
+bootloader --append=" crashkernel=auto" --location=mbr --boot-drive=sda
+# Partition clearing information
+clearpart --none --initlabel
+# Disk partitioning information
+part /boot --fstype="xfs" --ondisk=sda --size=500
+part btrfs.130 --fstype="btrfs" --ondisk=sda --size=28171
+part swap --fstype="swap" --ondisk=sda --size=2048
+btrfs none --label=centos --data=single btrfs.130
+btrfs /home --subvol --name=home
+btrfs / --subvol --name=root
+
+%packages
+@core
+kexec-tools
+
+%end
+
+%addon com_redhat_kdump --enable --reserve-mb='auto'
+
+%end
+
+
+
+□hostnameとかhostsとかの設定
+○Controller
+[root@osc ~]# cat /etc/hostname
+osc
+
+○Hypervisor X
+[root@osh1 ~]# cat /etc/hostname
+osh1
+
+○共通
+[root@osc ~]# cat /etc/hosts
+127.0.0.1   localhost localhost.localdomain localhost4 localhost4.localdomain4
+::1         localhost localhost.localdomain localhost6 localhost6.localdomain6
+
+192.168.1.50    localrepo
+192.168.10.50   osc
+192.168.10.51   osh1
+
+
+
+□その他のおまじない
+○SELINUX
+鬱陶しいから潰した
+[root@osh1 ~]# cat /etc/selinux/config | grep SELINUX=
+# SELINUX= can take one of these three values:
+SELINUX=disabled
+
+○firewalld(CentOS 6ではiptablesだったもの)
+こちらも潰す
+[root@osc ~]# systemctl disable firewalld.service
+rm '/etc/systemd/system/dbus-org.fedoraproject.FirewallD1.service'
+rm '/etc/systemd/system/basic.target.wants/firewalld.service'
+
+[root@osc ~]# systemctl list-unit-files -t service | grep firewalld
+firewalld.service                           disabled
+
+○どういうわけかIPv6がデフォで有効のようなので無効化
+[root@osc ~]# echo "net.ipv6.conf.all.disable_ipv6 = 1" >> /etc/sysctl.conf
+
+
+
+□ネットワーク設定
+※nmtuiでよしなに設定した後の状態
+(serviceネットワークの疎通がとれなくてハマった。静的ルートを追加して解決？pingは通った。)
+○Controller
+[root@osc ~]# ip a
+1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN
+    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
+    inet 127.0.0.1/8 scope host lo
+       valid_lft forever preferred_lft forever
+2: enp0s3: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast state UP qlen 1000
+    link/ether 08:00:27:6b:a7:c2 brd ff:ff:ff:ff:ff:ff
+    inet 192.168.1.50/32 brd 192.168.1.50 scope global enp0s3
+       valid_lft forever preferred_lft forever
+3: enp0s8: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast state UP qlen 1000
+    link/ether 08:00:27:63:3b:47 brd ff:ff:ff:ff:ff:ff
+    inet 192.168.10.50/32 brd 192.168.10.50 scope global enp0s8
+       valid_lft forever preferred_lft forever
+4: enp0s9: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast state UP qlen 1000
+    link/ether 08:00:27:f8:1e:c2 brd ff:ff:ff:ff:ff:ff
+    inet 192.168.56.101/24 brd 192.168.56.255 scope global dynamic enp0s9
+       valid_lft 1202sec preferred_lft 1202sec
+
+[root@osc ~]# ip r
+default via 192.168.1.1 dev enp0s3  proto static  metric 100
+192.168.1.1 dev enp0s3  proto static  scope link  metric 100
+192.168.10.0/24 dev enp0s8  proto static  scope link  metric 100
+192.168.56.0/24 dev enp0s9  proto kernel  scope link  src 192.168.56.101  metric 100
+
+
+○Hypervisor
+[root@osh1 ~]# ip a
+1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN
+    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
+    inet 127.0.0.1/8 scope host lo
+       valid_lft forever preferred_lft forever
+2: enp0s3: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast state UP qlen 1000
+    link/ether 08:00:27:cf:75:9a brd ff:ff:ff:ff:ff:ff
+    inet 192.168.1.51/32 brd 192.168.1.51 scope global enp0s3
+       valid_lft forever preferred_lft forever
+3: enp0s8: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast state UP qlen 1000
+    link/ether 08:00:27:9c:5b:32 brd ff:ff:ff:ff:ff:ff
+    inet 192.168.10.51/32 brd 192.168.10.51 scope global enp0s8
+       valid_lft forever preferred_lft forever
+4: enp0s9: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast state UP qlen 1000
+    link/ether 08:00:27:d7:b0:ac brd ff:ff:ff:ff:ff:ff
+    inet 192.168.56.102/24 brd 192.168.56.255 scope global dynamic enp0s9
+       valid_lft 1203sec preferred_lft 1203sec
+
+[root@osh1 ~]# ip r
+default via 192.168.1.1 dev enp0s3  proto static  metric 100
+192.168.1.1 dev enp0s3  proto static  scope link  metric 100
+192.168.10.0/24 dev enp0s8  proto static  scope link  metric 100
+192.168.56.0/24 dev enp0s9  proto kernel  scope link  src 192.168.56.102  metric 100
+
+
+
+□必須なものをインストール
+[root@osc ~]# yum install -y vim wget
+
+
+
+□ローカルリポジトリ構築(Controllerに作成)
+httpd, createrepo、yum-utils(reposyncに使う)のインストール
+[root@osc ~]# yum install -y httpd createrepo yum-utils
+
+
+httpdの自動起動ON、サービス開始
+[root@osc ~]# systemctl enable httpd.service
+ln -s '/usr/lib/systemd/system/httpd.service' '/etc/systemd/system/multi-user.target.wants/httpd.service'
+[root@osc ~]# systemctl start httpd.service
+[root@osc ~]# systemctl status httpd.service
+httpd.service - The Apache HTTP Server
+   Loaded: loaded (/usr/lib/systemd/system/httpd.service; enabled)
+   Active: active (running) since 火 2015-06-09 05:04:36 JST; 5s ago
+ Main PID: 3609 (httpd)
+   Status: "Processing requests..."
+   CGroup: /system.slice/httpd.service
+           ├─3609 /usr/sbin/httpd -DFOREGROUND
+           ├─3610 /usr/sbin/httpd -DFOREGROUND
+           ├─3611 /usr/sbin/httpd -DFOREGROUND
+           ├─3612 /usr/sbin/httpd -DFOREGROUND
+           ├─3613 /usr/sbin/httpd -DFOREGROUND
+           └─3614 /usr/sbin/httpd -DFOREGROUND
+
+ 6月 09 05:04:35 osc httpd[3609]: AH00558: httpd: Could not reliably determine the server's fully q...ssage
+ 6月 09 05:04:36 osc systemd[1]: Started The Apache HTTP Server.
+Hint: Some lines were ellipsized, use -l to show in full.
+
+
+リポジトリの追加(EPEL, RDO Juno)
+[root@osc ~]# rpm -ivh http://ftp.iij.ad.jp/pub/linux/fedora/epel/7/x86_64/e/epel-release-7-5.noarch.rpm
+http://ftp.iij.ad.jp/pub/linux/fedora/epel/7/x86_64/e/epel-release-7-5.noarch.rpm を取得中
+警告: /var/tmp/rpm-tmp.wE6mjf: ヘッダー V3 RSA/SHA256 Signature、鍵 ID 352c64e5: NOKEY
+準備しています...              ################################# [100%]
+更新中 / インストール中...
+   1:epel-release-7-5                 ################################# [100%]
+
+[root@osc ~]# rpm -ivh https://repos.fedorapeople.org/repos/openstack/openstack-juno/rdo-release-juno-1.noarch.rpm
+https://repos.fedorapeople.org/repos/openstack/openstack-juno/rdo-release-juno-1.noarch.rpm を取得中
+警告: /var/tmp/rpm-tmp.Hr22NJ: ヘッダー V4 RSA/SHA1 Signature、鍵 ID df6674e3: NOKEY
+準備しています...              ################################# [100%]
+更新中 / インストール中...
+   1:rdo-release-juno-1               ################################# [100%]
+
+
+リポジトリ一覧
+[root@osc ~]# yum repolist
+読み込んだプラグイン:fastestmirror
+base                                                                                 | 3.6 kB  00:00:00
+epel/x86_64/metalink                                                                 | 5.4 kB  00:00:00
+epel                                                                                 | 4.4 kB  00:00:00
+extras                                                                               | 3.4 kB  00:00:00
+openstack-juno                                                                       | 2.9 kB  00:00:00
+updates                                                                              | 3.4 kB  00:00:00
+(1/7): base/7/x86_64/group_gz                                                        | 154 kB  00:00:00
+(2/7): epel/x86_64/group_gz                                                          | 169 kB  00:00:00
+(3/7): extras/7/x86_64/primary_db                                                    |  54 kB  00:00:00
+(4/7): updates/7/x86_64/primary_db                                                   | 1.7 MB  00:00:01
+(5/7): epel/x86_64/primary_db                                                        | 3.5 MB  00:00:02
+(6/7): base/7/x86_64/primary_db                                                      | 5.1 MB  00:00:03
+(7/7): openstack-juno/primary_db                                                     | 319 kB  00:00:03
+(1/2): epel/x86_64/updateinfo                                                        | 388 kB  00:00:00
+(2/2): epel/x86_64/pkgtags                                                           | 1.5 MB  00:00:00
+Determining fastest mirrors
+ * base: www.ftp.ne.jp
+ * epel: ftp.kddilabs.jp
+ * extras: www.ftp.ne.jp
+ * updates: www.ftp.ne.jp
+リポジトリー ID                     リポジトリー名                                                     状態
+base/7/x86_64                       CentOS-7 - Base                                                    8,652
+epel/x86_64                         Extra Packages for Enterprise Linux 7 - x86_64                     8,036
+extras/7/x86_64                     CentOS-7 - Extras                                                    128
+openstack-juno                      OpenStack Juno Repository                                            976
+updates/7/x86_64                    CentOS-7 - Updates                                                   609
+repolist: 18,401
+
+
+リポジトリの同期(RPMのダウンロード)、リポジトリ化
+[root@osc ~]# cd /var/www/html
+[root@osc html]# reposync -r base -t /var/yum/cache
+[root@osc html]# reposync -r updates -t /var/yum/cache
+[root@osc html]# reposync -r extras -t /var/yum/cache
+[root@osc html]# reposync -r centosplus -t /var/yum/cache
+[root@osc html]# reposync -r epel -t /var/yum/cache
+[root@osc html]# reposync -r openstack-juno -t /var/yum/cache
+[root@osc html]# createrepo base
+[root@osc html]# createrepo updates
+[root@osc html]# createrepo extras
+[root@osc html]# createrepo centosplus
+[root@osc html]# createrepo epel
+[root@osc html]# createrepo openstack-juno
+
+～～～～～～～～～～～～～～～～～～～～～～～～～～
+※時間がかかるのでshell化して実行すると幸せになれる
+[root@osc ~]# cd /home/
+[root@osc home]# vim repo.sh
+#!/bin/sh
+cd /var/www/html
+reposync -r base -t /var/yum/cache
+reposync -r updates -t /var/yum/cache
+reposync -r extras -t /var/yum/cache
+reposync -r centosplus -t /var/yum/cache
+reposync -r epel -t /var/yum/cache
+reposync -r openstack-juno -t /var/yum/cache
+createrepo base
+createrepo updates
+createrepo extras
+createrepo centosplus
+createrepo epel
+createrepo openstack-juno
+
+[root@osc home]# chmod 755 repo.sh
+[root@osc home]# ll
+合計 4
+-rwxr-xr-x 1 root root 259  6月  9 03:30 repo.sh
+
+[root@osc home]# ./repo.sh
+～リポジトリ自動生成スタート～
+
+～～～～～～～～～～～～～～～～～～～～～～～～～～
+
+
+リポジトリファイルの編集(Hypervisorでも実施する)
+[root@osc home]# cd ~
+[root@osc ~]# vim /etc/yum.repos.d/CentOS-Base.repo
+～base, updates, extrasにそれぞれenabled=0を追記～
+
+[root@osc ~]# vim /etc/yum.repos.d/epel.repo
+～epelをenabled=0に編集～
+
+[root@osc ~]# vim /etc/yum.repos.d/rdo-release.repo
+～openstack-junoをenabled=0に編集～
+
+[root@osc ~]# vim /etc/yum.repos.d/Local.repo
+以下を追記
+[CentOS_7.0_Base]
+name=CentOS 7.0 Base
+baseurl=http://localrepo/base/
+enabled=1
+
+[CentOS_7.0_Updates_20150609]
+name=CentOS 7.0 Updates (20150609)
+baseurl=http://localrepo/updates/
+enabled=1
+
+[CentOS_7.0_Extras_20150609]
+name=CentOS 7.0 Extras (20150609)
+baseurl=http://localrepo/extras/
+enabled=1
+
+[CentOS_7.0_Plus_20150609]
+name=CentOS 7.0 Plus (20150609)
+baseurl=http://localrepo/centosplus/
+enabled=1
+
+[EPEL_7_20150609]
+name=EPEL 7 (20150609)
+baseurl=http://localrepo/epel/
+enabled=1
+
+[RDO_OpenStack_Juno_20150609]
+name=RDO OpenStack Juno (20150609)
+baseurl=http://localrepo/openstack-juno/
+enabled=1
+
+
+リポジトリ再読込(Hypervisorでも実施する)
+[root@osc ~]# rm -Rf /var/cache/yum/x86_64/7/*
+[root@osc ~]# ll /var/cache/yum/x86_64/7/
+合計 0
+[root@osc ~]# yum clean all
+読み込んだプラグイン:fastestmirror
+リポジトリーを清掃しています: CentOS_7.0_Base CentOS_7.0_Updates_20150609 EPEL_7_20150609
+                            : RDO_OpenStack_Juno_20150609
+Cleaning up everything
+[root@osc ~]# yum repolist
+読み込んだプラグイン:fastestmirror
+CentOS_7.0_Base                                                                      | 2.9 kB  00:00:00
+CentOS_7.0_Updates_20150609                                                          | 2.9 kB  00:00:00
+EPEL_7_20150609                                                                      | 2.9 kB  00:00:00
+RDO_OpenStack_Juno_20150609                                                          | 2.9 kB  00:00:00
+(1/4): RDO_OpenStack_Juno_20150609/primary_db                                        | 252 kB  00:00:00
+(2/4): EPEL_7_20150609/primary_db                                                    | 4.1 MB  00:00:00
+(3/4): CentOS_7.0_Updates_20150609/primary_db                                        | 1.6 MB  00:00:00
+(4/4): CentOS_7.0_Base/primary_db                                                    | 5.1 MB  00:00:00
+Determining fastest mirrors
+リポジトリー ID                                   リポジトリー名                                       状態
+CentOS_7.0_Base                                   CentOS 7.0 Base                                      8,652
+CentOS_7.0_Updates_20150609                       CentOS 7.0 Updates (20150609)                          609
+EPEL_7_20150609                                   EPEL 7 (20150609)                                    8,036
+RDO_OpenStack_Juno_20150609                       RDO OpenStack Juno (20150609)                          724
+repolist: 18,021
+
+
+OSアップデート(Hypervisorでも実施する)
+[root@osc ~]# yum update -y
+
+
+
+
+
+■01: MariaDBのセットアップ
+CentOS 7からはMySQLに代わって、よくわからんコレが標準となった
+
+インストール
+[root@osc ~]# yum install -y mariadb-server python-mysqldb
+[root@osc ~]# cp /etc/my.cnf /etc/my.cnf.org
+
+自動起動ON、サービス開始
+[root@osc ~]# systemctl enable mariadb.service
+ln -s '/usr/lib/systemd/system/mariadb.service' '/etc/systemd/system/multi-user.target.wants/mariadb.service'
+[root@osc ~]# systemctl start mariadb.service
+
+初期設定
+[root@osc ~]# mysql_secure_installation
+/usr/bin/mysql_secure_installation: 行 379: find_mysql_client: コマンドが見つかりません
+
+NOTE: RUNNING ALL PARTS OF THIS SCRIPT IS RECOMMENDED FOR ALL MariaDB
+      SERVERS IN PRODUCTION USE!  PLEASE READ EACH STEP CAREFULLY!
+
+In order to log into MariaDB to secure it, we'll need the current
+password for the root user.  If you've just installed MariaDB, and
+you haven't set the root password yet, the password will be blank,
+so you should just press enter here.
+
+Enter current password for root (enter for none):
+OK, successfully used password, moving on...
+
+Setting the root password ensures that nobody can log into the MariaDB
+root user without the proper authorisation.
+
+Set root password? [Y/n] Y
+New password: <dbpassと入力>
+Re-enter new password: <dbpassと入力>
+Password updated successfully!
+Reloading privilege tables..
+ ... Success!
+
+
+By default, a MariaDB installation has an anonymous user, allowing anyone
+to log into MariaDB without having to have a user account created for
+them.  This is intended only for testing, and to make the installation
+go a bit smoother.  You should remove them before moving into a
+production environment.
+
+Remove anonymous users? [Y/n] Y
+ ... Success!
+
+Normally, root should only be allowed to connect from 'localhost'.  This
+ensures that someone cannot guess at the root password from the network.
+
+Disallow root login remotely? [Y/n] Y
+ ... Success!
+
+By default, MariaDB comes with a database named 'test' that anyone can
+access.  This is also intended only for testing, and should be removed
+before moving into a production environment.
+
+Remove test database and access to it? [Y/n] Y
+ - Dropping test database...
+ ... Success!
+ - Removing privileges on test database...
+ ... Success!
+
+Reloading the privilege tables will ensure that all changes made so far
+will take effect immediately.
+
+Reload privilege tables now? [Y/n] Y
+ ... Success!
+
+Cleaning up...
+
+All done!  If you've completed all of the above steps, your MariaDB
+installation should now be secure.
+
+Thanks for using MariaDB!
+
+
+
+
+
+■02: RabbitMQのセットアップ
+
+インストール
+[root@osc ~]# yum install -y rabbitmq-server
+
+なんかエラーでやがった↓
+erlang-sd_notify-0.1-1.el7.x86_64.rpm の公開鍵がインストールされていません
+
+yum.confのgpgcheckをオフる
+[root@osc ~]# diff /etc/yum.conf /etc/yum.conf.org
+8c8
+< gpgcheck=0
+---
+> gpgcheck=1
+
+リトライ
+[root@osc ~]# yum install -y rabbitmq-server
+うまくいった。
+
+
+自動起動ON、サービス開始
+[root@osc ~]# systemctl enable rabbitmq-server.service
+ln -s '/usr/lib/systemd/system/rabbitmq-server.service' '/etc/systemd/system/multi-user.target.wants/rabbitmq-server.service'
+[root@osc ~]# systemctl start rabbitmq-server.service
+
+
+
+
+
+■03: Keystoneのセットアップ
+
+Keystone用DBの作成と権限設定
+[root@osc ~]# mysql -u root -pdbpass -e "CREATE DATABASE keystone;"
+[root@osc ~]# mysql -u root -pdbpass -e "GRANT ALL PRIVILEGES ON keystone.* TO 'keystone'@'localhost' IDENTIFIED BY 'dbpass';"
+[root@osc ~]# mysql -u root -pdbpass -e "GRANT ALL PRIVILEGES ON keystone.* TO 'keystone'@'%' IDENTIFIED BY 'dbpass';"
+
+[root@osc ~]# mysql -u root -pdbpass -e "SHOW DATABASES;"
++--------------------+
+| Database           |
++--------------------+
+| information_schema |
+| keystone           |←これがあることを確認
+| mysql              |
+| performance_schema |
++--------------------+
+
+[root@osc ~]# mysql -u root -pdbpass -e "SELECT Host,User,Password FROM mysql.user;"
++-----------+----------+-------------------------------------------+
+| Host      | User     | Password                                  |
++-----------+----------+-------------------------------------------+
+| localhost | root     | *9FB2126F7514B6AF42B20E9E4B8E839B72E31396 |
+| 127.0.0.1 | root     | *9FB2126F7514B6AF42B20E9E4B8E839B72E31396 |
+| ::1       | root     | *9FB2126F7514B6AF42B20E9E4B8E839B72E31396 |
+| %         | keystone | *9FB2126F7514B6AF42B20E9E4B8E839B72E31396 |←これと
+| localhost | keystone | *9FB2126F7514B6AF42B20E9E4B8E839B72E31396 |←これがあることを確認
++-----------+----------+-------------------------------------------+
+
+
+インストール
+[root@osc ~]# yum install -y openstack-keystone python-keystoneclient
+
+
+設定
+[root@osc html]# cp /etc/keystone/keystone.conf /etc/keystone/keystone.conf.org
+[root@osc html]# vim /etc/keystone/keystone.conf
+[root@osc html]# diff /etc/keystone/keystone.conf /etc/keystone/keystone.conf.org
+13c13
+< admin_token=0123456789
+---
+> #admin_token=ADMIN
+353c353
+< verbose=true
+---
+> #verbose=false
+633c633
+< connection=mysql://keystone:dbpass@osc/keystone
+---
+> #connection=mysql://keystone:keystone@localhost/keystone
+1337d1336
+< driver=keystone.contrib.revoke.backends.sql.Revoke
+
+
+認証鍵設定とKeystoneサービスが使用するファイルへのアクセス権付与
+[root@osc html]# keystone-manage pki_setup --keystone-user keystone --keystone-group keystone
+[root@osc html]# chown -R keystone:keystone /var/log/keystone
+[root@osc html]# chown -R keystone:keystone /etc/keystone/ssl
+[root@osc html]# chmod -R o-rwx /etc/keystone/ssl
+
+
+Keystoneデータベースの初期設定
+[root@osc html]# su -s /bin/sh -c "keystone-manage db_sync" keystone
+
+
+自動起動ON、サービス開始
+[root@osc html]# systemctl enable openstack-keystone.service
+ln -s '/usr/lib/systemd/system/openstack-keystone.service' '/etc/systemd/system/multi-user.target.wants/openstack-keystone.service'
+[root@osc html]# systemctl start openstack-keystone.service
+
+
+環境変数設定
+[root@osc ~]# export OS_SERVICE_TOKEN=0123456789
+[root@osc ~]# export OS_SERVICE_ENDPOINT=http://osc:35357/v2.0
+
+admin(管理用)テナント・ユーザー・ロール作成
+[root@osc ~]# keystone tenant-create --name admin --description "Admin Tenant"
++-------------+----------------------------------+
+|   Property  |              Value               |
++-------------+----------------------------------+
+| description |           Admin Tenant           |
+|   enabled   |               True               |
+|      id     | aee354b3a53641d4909b44502001daac |
+|     name    |              admin               |
++-------------+----------------------------------+
+
+[root@osc ~]# keystone user-create --name admin --pass adminpass --email admin@xxx.co.jp
++----------+----------------------------------+
+| Property |              Value               |
++----------+----------------------------------+
+|  email   |         admin@xxx.co.jp          |
+| enabled  |               True               |
+|    id    | d0ce22c2c5874fb49cfd37bb08c92ae5 |
+|   name   |              admin               |
+| username |              admin               |
++----------+----------------------------------+
+
+[root@osc ~]# keystone role-create --name admin
++----------+----------------------------------+
+| Property |              Value               |
++----------+----------------------------------+
+|    id    | 5f76b0ddd1c646fc8b219a5f84dfe30d |
+|   name   |              admin               |
++----------+----------------------------------+
+
+admin(管理用)ユーザーにadmin(管理用)ロールを付与し、更にadmin(管理用)テナントに参加させる
+[root@osc ~]# keystone user-role-add --user admin --tenant admin --role admin
+
+
+テスト用テナント・ユーザー・ロール作成
+[root@osc ~]# keystone tenant-create --name test --description "Test Tenant"
++-------------+----------------------------------+
+|   Property  |              Value               |
++-------------+----------------------------------+
+| description |           Test Tenant            |
+|   enabled   |               True               |
+|      id     | 9c8392f3fab44f909f47ff2405a662d4 |
+|     name    |               test               |
++-------------+----------------------------------+
+
+[root@osc ~]# keystone user-create --name test --pass testpass --email test@test.co.jp
++----------+----------------------------------+
+| Property |              Value               |
++----------+----------------------------------+
+|  email   |         test@test.co.jp          |
+| enabled  |               True               |
+|    id    | 1e6fde1e01a74a3a9d7cc4a9bdaeb1a9 |
+|   name   |               test               |
+| username |               test               |
++----------+----------------------------------+
+
+[root@osc ~]# keystone role-create --name test
++----------+----------------------------------+
+| Property |              Value               |
++----------+----------------------------------+
+|    id    | 2376ffd94f054b4bb3cc20959c9dc2c5 |
+|   name   |               test               |
++----------+----------------------------------+
+
+テスト用ユーザーにテストロールを付与し、更にテストテナントに参加させる
+[root@osc ~]# keystone user-role-add --user test --tenant test --role test
+
+
+OpenStackサービス用テナントの作成
+[root@osc ~]# keystone tenant-create --name service --description "Service Tenant"
++-------------+----------------------------------+
+|   Property  |              Value               |
++-------------+----------------------------------+
+| description |          Service Tenant          |
+|   enabled   |               True               |
+|      id     | 6e66af56f86c41b58de3ddd21bdec945 |
+|     name    |             service              |
++-------------+----------------------------------+
+
+Keystoneサービスを定義し、更にエンドポイントを登録
+[root@osc ~]# keystone service-create --name keystone --type identity --description "OpenStack Identity"
++-------------+----------------------------------+
+|   Property  |              Value               |
++-------------+----------------------------------+
+| description |        OpenStack Identity        |
+|   enabled   |               True               |
+|      id     | 0655f80d916b4db0a4c70f52cf81f274 |
+|     name    |             keystone             |
+|     type    |             identity             |
++-------------+----------------------------------+
+[root@osc ~]# keystone endpoint-create \
+   --service-id $(keystone service-list | awk '/ identity / {print $2}') \
+   --publicurl http://osc:5000/v2.0 \
+   --internalurl http://osc:5000/v2.0 \
+   --adminurl http://osc:35357/v2.0 \
+   --region regionOne
++-------------+----------------------------------+
+|   Property  |              Value               |
++-------------+----------------------------------+
+|   adminurl  |      http://osc:35357/v2.0       |
+|      id     | ed8fc9f32bc54bc982c82c5566fb5ba9 |
+| internalurl |       http://osc:5000/v2.0       |
+|  publicurl  |       http://osc:5000/v2.0       |
+|    region   |            regionOne             |
+|  service_id | 0655f80d916b4db0a4c70f52cf81f274 |
++-------------+----------------------------------+
+
+
+今後の作業が楽になるように、Adminユーザ、テストユーザに返信するための環境変数ファイルを作成
+○Adminユーザ
+[root@osc ~]# cat opst_admin
+export OS_TENANT_NAME=admin
+export OS_USERNAME=admin
+export OS_PASSWORD=adminpass
+export OS_AUTH_URL=http://osc:35357/v2.0	←Admin権限をもつユーザが使えるエンドポイント
+
+○テストユーザ
+[root@osc ~]# cat opst_test
+export OS_TENANT_NAME=test
+export OS_USERNAME=test
+export OS_PASSWORD=testpass
+export OS_AUTH_URL=http://osc:5000/v2.0		←一般ユーザが使えるエンドポイント
+
+
+Admin権限でテスト
+[root@osc ~]# unset OS_SERVICE_TOKEN OS_SERVICE_ENDPOINT
+[root@osc ~]# source opst_admin
+[root@osc ~]# keystone tenant-list
++----------------------------------+---------+---------+
+|                id                |   name  | enabled |
++----------------------------------+---------+---------+
+| aee354b3a53641d4909b44502001daac |  admin  |   True  |
+| 6e66af56f86c41b58de3ddd21bdec945 | service |   True  |
+| 9c8392f3fab44f909f47ff2405a662d4 |   test  |   True  |
++----------------------------------+---------+---------+
+[root@osc ~]# keystone user-list
++----------------------------------+-------+---------+-----------------+
+|                id                |  name | enabled |      email      |
++----------------------------------+-------+---------+-----------------+
+| d0ce22c2c5874fb49cfd37bb08c92ae5 | admin |   True  | admin@xxx.co.jp |
+| 1e6fde1e01a74a3a9d7cc4a9bdaeb1a9 |  test |   True  | test@test.co.jp |
++----------------------------------+-------+---------+-----------------+
+[root@osc ~]# keystone role-list
++----------------------------------+-------+
+|                id                |  name |
++----------------------------------+-------+
+| 5f76b0ddd1c646fc8b219a5f84dfe30d | admin |
+| 2376ffd94f054b4bb3cc20959c9dc2c5 |  test |
++----------------------------------+-------+
+[root@osc ~]# keystone service-list
++----------------------------------+----------+----------+--------------------+
+|                id                |   name   |   type   |    description     |
++----------------------------------+----------+----------+--------------------+
+| 0655f80d916b4db0a4c70f52cf81f274 | keystone | identity | OpenStack Identity |
++----------------------------------+----------+----------+--------------------+
+[root@osc ~]# keystone endpoint-list
++----------------------------------+-----------+----------------------+----------------------+-----------------------+----------------------------------+
+|                id                |   region  |      publicurl       |     internalurl      |        adminurl       |            service_id            |
++----------------------------------+-----------+----------------------+----------------------+-----------------------+----------------------------------+
+| ed8fc9f32bc54bc982c82c5566fb5ba9 | regionOne | http://osc:5000/v2.0 | http://osc:5000/v2.0 | http://osc:35357/v2.0 | 0655f80d916b4db0a4c70f52cf81f274 |
++----------------------------------+-----------+----------------------+----------------------+-----------------------+----------------------------------+
+
+
+
+
+
+■04: Glanceのセットアップ
+
+Glance用DBの作成と権限設定
+[root@osc ~]# mysql -u root -pdbpass -e "CREATE DATABASE glance;"
+[root@osc ~]# mysql -u root -pdbpass -e "GRANT ALL PRIVILEGES ON glance.* TO 'glance'@'localhost' IDENTIFIED BY 'dbpass';"
+[root@osc ~]# mysql -u root -pdbpass -e "GRANT ALL PRIVILEGES ON glance.* TO 'glance'@'%' IDENTIFIED BY 'dbpass';"
+
+[root@osc ~]# mysql -u root -pdbpass -e "SHOW DATABASES;"
++--------------------+
+| Database           |
++--------------------+
+| information_schema |
+| glance             |←これがあることを確認
+| keystone           |
+| mysql              |
+| performance_schema |
++--------------------+
+
+[root@osc ~]# mysql -u root -pdbpass -e "SELECT Host,User,Password FROM mysql.user;"
+[root@osc ~]# mysql -u root -pdbpass -e "SELECT Host,User,Password FROM mysql.user;"
++-----------+----------+-------------------------------------------+
+| Host      | User     | Password                                  |
++-----------+----------+-------------------------------------------+
+| localhost | root     | *9FB2126F7514B6AF42B20E9E4B8E839B72E31396 |
+| 127.0.0.1 | root     | *9FB2126F7514B6AF42B20E9E4B8E839B72E31396 |
+| ::1       | root     | *9FB2126F7514B6AF42B20E9E4B8E839B72E31396 |
+| %         | keystone | *9FB2126F7514B6AF42B20E9E4B8E839B72E31396 |
+| localhost | keystone | *9FB2126F7514B6AF42B20E9E4B8E839B72E31396 |
+| localhost | glance   | *9FB2126F7514B6AF42B20E9E4B8E839B72E31396 |
+| %         | glance   | *9FB2126F7514B6AF42B20E9E4B8E839B72E31396 |←これがあることを確認
++-----------+----------+-------------------------------------------+←これと
+
+KeystoneにGlanceユーザ(serviceテナント配属)・サービスを登録
+[root@osc ~]# source opst_admin
+[root@osc ~]# keystone user-create --name glance --pass glancepass
++----------+----------------------------------+
+| Property |              Value               |
++----------+----------------------------------+
+|  email   |                                  |
+| enabled  |               True               |
+|    id    | 13354863f2ed4bb78a7e449eac5b1423 |
+|   name   |              glance              |
+| username |              glance              |
++----------+----------------------------------+
+
+[root@osc ~]# keystone user-role-add --user glance --tenant service --role admin
+
+[root@osc ~]# keystone service-create --name glance --type image --description "OpenStack Image Service"
++-------------+----------------------------------+
+|   Property  |              Value               |
++-------------+----------------------------------+
+| description |     OpenStack Image Service      |
+|   enabled   |               True               |
+|      id     | cff3d87778674c318cc4ca6c895e6e60 |
+|     name    |              glance              |
+|     type    |              image               |
++-------------+----------------------------------+
+
+[root@osc ~]# keystone endpoint-create \
+>   --service-id $(keystone service-list | awk '/ image / {print $2}') \
+>   --publicurl http://osc:9292 \
+>   --internalurl http://osc:9292 \
+>   --adminurl http://osc:9292 \
+>   --region regionOne
++-------------+----------------------------------+
+|   Property  |              Value               |
++-------------+----------------------------------+
+|   adminurl  |         http://osc:9292          |
+|      id     | c3e1dd194d004146a1dfbda287956cf4 |
+| internalurl |         http://osc:9292          |
+|  publicurl  |         http://osc:9292          |
+|    region   |            regionOne             |
+|  service_id | cff3d87778674c318cc4ca6c895e6e60 |
++-------------+----------------------------------+
+
+
+インストール
+[root@osc ~]# yum install -y openstack-glance python-glanceclient
+
+設定
+glance-apiの設定(ハマッた時の解析用にdebug=true推奨)
+[root@osc ~]# cp /etc/glance/glance-api.conf /etc/glance/glance-api.conf.org
+[root@osc ~]# vim /etc/glance/glance-api.conf
+[root@osc ~]# diff /etc/glance/glance-api.conf /etc/glance/glance-api.conf.org
+3c3
+< verbose=True
+---
+> #verbose=True
+6c6
+< debug=False
+---
+> #debug=False
+12c12
+< default_store=file
+---
+> #default_store=file
+210c210
+< notification_driver = noop
+---
+> # notification_driver = noop
+303c303
+< connection=mysql://glance:dbpass@osc/glance
+---
+> #connection=mysql://glance:glance@localhost/glance
+384,388c384,387
+< auth_uri = http://osc:5000/v2.0
+< identity_uri = http://osc:35357
+< admin_tenant_name=service
+< admin_user=glance
+< admin_password=glancepass
+---
+> #identity_uri=http://127.0.0.1:35357
+> #admin_tenant_name=%SERVICE_TENANT_NAME%
+> #admin_user=%SERVICE_USER%
+> #admin_password=%SERVICE_PASSWORD%
+399c398
+< flavor=keystone
+---
+> #flavor=
+449c448
+< filesystem_store_datadir=/var/lib/glance/images/
+---
+> #filesystem_store_datadir=/var/lib/glance/images/
+463c462
+< #filesystem_store_datadirs=/var/lib/glance/images/
+---
+> #filesystem_store_datadirs=/var/lib/glance/images/:1
+
+
+
+glance-registoryの設定（apiと同様にdebug=true)
+[root@osc ~]# cp /etc/glance/glance-registry.conf /etc/glance/glance-registry.conf.org
+[root@osc ~]# vim /etc/glance/glance-registry.conf
+[root@osc ~]# diff /etc/glance/glance-registry.conf /etc/glance/glance-registry.conf.org
+3c3
+< verbose=True
+---
+> #verbose=True
+6c6
+< debug=False
+---
+> #debug=False
+85c85
+< notification_driver = noop
+---
+> # notification_driver = noop
+143c143
+< connection = mysql://glance:dbpass@osc/glance
+---
+> #connection=mysql://glance:glance@localhost/glance
+224,228c224,227
+< auth_uri = http://osc:5000/v2.0
+< identity_uri = http://osc:35357
+< admin_tenant_name = service
+< admin_user = glance
+< admin_password = glancepass
+---
+> #identity_uri=http://127.0.0.1:35357
+> #admin_tenant_name=%SERVICE_TENANT_NAME%
+> #admin_user=%SERVICE_USER%
+> #admin_password=%SERVICE_PASSWORD%
+238c237
+< flavor=keystone
+---
+> #flavor=
+
+
+
+Glanceデータベースの初期設定
+[root@osc ~]# su -s /bin/sh -c "glance-manage db_sync" glance
+
+
+
+自動起動設定ON、サービス起動
+[root@osc ~]# systemctl enable openstack-glance-api.service openstack-glance-registry.service
+ln -s '/usr/lib/systemd/system/openstack-glance-api.service' '/etc/systemd/system/multi-user.target.wants/openstack-glance-api.service'
+ln -s '/usr/lib/systemd/system/openstack-glance-registry.service' '/etc/systemd/system/multi-user.target.wants/openstack-glance-registry.service'
+
+[root@osc ~]# systemctl start openstack-glance-api.service openstack-glance-registry.service
+
+[root@osc ~]# systemctl status openstack-glance-api.service openstack-glance-registry.service
+openstack-glance-api.service - OpenStack Image Service (code-named Glance) API server
+   Loaded: loaded (/usr/lib/systemd/system/openstack-glance-api.service; enabled)
+   Active: active (running) since 金 2015-06-19 02:22:40 JST; 13s ago
+ Main PID: 2463 (glance-api)
+   CGroup: /system.slice/openstack-glance-api.service
+           ├─2463 /usr/bin/python /usr/bin/glance-api
+           └─2480 /usr/bin/python /usr/bin/glance-api
+
+ 6月 19 02:22:38 osc systemd[1]: Starting OpenStack Image Service (code-named Glance) API server...
+ 6月 19 02:22:40 osc systemd[1]: Started OpenStack Image Service (code-named Glance) API server.
+
+openstack-glance-registry.service - OpenStack Image Service (code-named Glance) Registry server
+   Loaded: loaded (/usr/lib/systemd/system/openstack-glance-registry.service; enabled)
+   Active: active (running) since 金 2015-06-19 02:22:40 JST; 14s ago
+ Main PID: 2464 (glance-registry)
+   CGroup: /system.slice/openstack-glance-registry.service
+           ├─2464 /usr/bin/python /usr/bin/glance-registry
+           └─2479 /usr/bin/python /usr/bin/glance-registry
+
+ 6月 19 02:22:38 osc systemd[1]: Starting OpenStack Image Service (code-named Glance) Registry server...
+ 6月 19 02:22:40 osc systemd[1]: Started OpenStack Image Service (code-named Glance) Registry server.
+
+
+
+テストイメージの取得とGlanceへの登録
+[root@osc ~]# mkdir glance-images
+[root@osc ~]# wget -P glance-images/ http://download.cirros-cloud.net/0.3.3/cirros-0.3.3-x86_64-disk.img
+[root@osc ~]# glance image-create --name "cirros-0.3.3-x86_64" --file glance-images/cirros-0.3.3-x86_64-disk.img --disk-format qcow2 --container-format bare --is-public True --progress
+[=============================>] 100%
++------------------+--------------------------------------+
+| Property         | Value                                |
++------------------+--------------------------------------+
+| checksum         | 133eae9fb1c98f45894a4e60d8736619     |
+| container_format | bare                                 |
+| created_at       | 2015-06-18T17:39:29                  |
+| deleted          | False                                |
+| deleted_at       | None                                 |
+| disk_format      | qcow2                                |
+| id               | 0f3fe92b-4a80-43e9-a89c-6d20b1fd02d8 |
+| is_public        | True                                 |
+| min_disk         | 0                                    |
+| min_ram          | 0                                    |
+| name             | cirros-0.3.3-x86_64                  |
+| owner            | aee354b3a53641d4909b44502001daac     |
+| protected        | False                                |
+| size             | 13200896                             |
+| status           | active                               |
+| updated_at       | 2015-06-18T17:39:29                  |
+| virtual_size     | None                                 |
++------------------+--------------------------------------+
+[root@osc ~]# glance image-list
++--------------------------------------+---------------------+-------------+------------------+----------+--------+
+| ID                                   | Name                | Disk Format | Container Format | Size     | Status |
++--------------------------------------+---------------------+-------------+------------------+----------+--------+
+| 0f3fe92b-4a80-43e9-a89c-6d20b1fd02d8 | cirros-0.3.3-x86_64 | qcow2       | bare             | 13200896 | active |
++--------------------------------------+---------------------+-------------+------------------+----------+--------+
+
+
+
+
+
+■05: Cinderのセットアップ
+
+Cinder用DBの作成と権限設定
+[root@osc ~]# mysql -u root -pdbpass -e "CREATE DATABASE cinder;"
+[root@osc ~]# mysql -u root -pdbpass -e "GRANT ALL PRIVILEGES ON cinder.* TO 'cinder'@'localhost' IDENTIFIED BY 'dbpass';"
+[root@osc ~]# mysql -u root -pdbpass -e "GRANT ALL PRIVILEGES ON cinder.* TO 'cinder'@'%' IDENTIFIED BY 'dbpass';"
+
+[root@osc ~]# mysql -u root -pdbpass -e "SHOW DATABASES;"
++--------------------+
+| Database           |
++--------------------+
+| information_schema |
+| cinder             |←これがあることを確認
+| glance             |
+| keystone           |
+| mysql              |
+| performance_schema |
++--------------------+
+
+[root@osc ~]# mysql -u root -pdbpass -e "SELECT Host,User,Password FROM mysql.user;"
++-----------+----------+-------------------------------------------+
+| Host      | User     | Password                                  |
++-----------+----------+-------------------------------------------+
+| localhost | root     | *9FB2126F7514B6AF42B20E9E4B8E839B72E31396 |
+| 127.0.0.1 | root     | *9FB2126F7514B6AF42B20E9E4B8E839B72E31396 |
+| ::1       | root     | *9FB2126F7514B6AF42B20E9E4B8E839B72E31396 |
+| %         | keystone | *9FB2126F7514B6AF42B20E9E4B8E839B72E31396 |
+| localhost | keystone | *9FB2126F7514B6AF42B20E9E4B8E839B72E31396 |
+| localhost | glance   | *9FB2126F7514B6AF42B20E9E4B8E839B72E31396 |
+| %         | glance   | *9FB2126F7514B6AF42B20E9E4B8E839B72E31396 |
+| localhost | cinder   | *9FB2126F7514B6AF42B20E9E4B8E839B72E31396 |←これと
+| %         | cinder   | *9FB2126F7514B6AF42B20E9E4B8E839B72E31396 |←これがあることを確認
++-----------+----------+-------------------------------------------+
+
+
+KeystoneにCinderユーザ(serviceテナント配属)・サービスを登録
+[root@osc ~]# source opst_admin
+[root@osc ~]# keystone user-create --name cinder --pass cinderpass
++----------+----------------------------------+
+| Property |              Value               |
++----------+----------------------------------+
+|  email   |                                  |
+| enabled  |               True               |
+|    id    | 876eb7c2bacb4ebbbf2af49929db4d5f |
+|   name   |              cinder              |
+| username |              cinder              |
++----------+----------------------------------+
+[root@osc ~]# keystone user-role-add --user cinder --tenant service --role admin
+[root@osc ~]# keystone service-create --name cinder --type volume --description "OpenStack Block Storage"
++-------------+----------------------------------+
+|   Property  |              Value               |
++-------------+----------------------------------+
+| description |     OpenStack Block Storage      |
+|   enabled   |               True               |
+|      id     | 13861bf1d0f2451ea5e6d412d5961141 |
+|     name    |              cinder              |
+|     type    |              volume              |
++-------------+----------------------------------+
+[root@osc ~]# keystone endpoint-create \
+>   --service-id $(keystone service-list | awk '/ volume / {print $2}') \
+>   --publicurl http://osc:8776/v1/%\(tenant_id\)s \
+>   --internalurl http://osc:8776/v1/%\(tenant_id\)s \
+>   --adminurl http://osc:8776/v1/%\(tenant_id\)s \
+>   --region regionOne
++-------------+----------------------------------+
+|   Property  |              Value               |
++-------------+----------------------------------+
+|   adminurl  | http://osc:8776/v1/%(tenant_id)s |
+|      id     | 37de0116fe4b460a9c04ca25fbe69833 |
+| internalurl | http://osc:8776/v1/%(tenant_id)s |
+|  publicurl  | http://osc:8776/v1/%(tenant_id)s |
+|    region   |            regionOne             |
+|  service_id | 13861bf1d0f2451ea5e6d412d5961141 |
++-------------+----------------------------------+
+
+
+インストール
+[root@osc ~]# yum install -y openstack-cinder python-cinderclient python-oslo-db
+
+設定
+
