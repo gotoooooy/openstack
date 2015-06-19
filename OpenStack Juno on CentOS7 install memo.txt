@@ -1023,4 +1023,226 @@ KeystoneにCinderユーザ(serviceテナント配属)・サービスを登録
 [root@osc ~]# yum install -y openstack-cinder python-cinderclient python-oslo-db
 
 設定
+[root@osc ~]# cp /etc/cinder/cinder.conf /etc/cinder/cinder.conf.org
+[root@osc ~]# vim /etc/cinder/cinder.conf
+[root@osc ~]# diff /etc/cinder/cinder.conf /etc/cinder/cinder.conf.org
+79c79
+< rabbit_host=osc
+---
+> #rabbit_host=localhost
+95c95
+< rabbit_password=rabbitpass
+---
+> #rabbit_password=guest
+181c181
+< rpc_backend=rabbit
+---
+> #rpc_backend=rabbit
+509c509
+< my_ip=osc
+---
+> #my_ip=10.0.0.1
+512c512
+< glance_host=osc
+---
+> #glance_host=$my_ip
+628c628
+< auth_strategy=keystone
+---
+> #auth_strategy=noauth
+1076c1076
+< iscsi_helper=tgtadm
+---
+> #iscsi_helper=tgtadm
+1079c1079
+< #volumes_dir=/etc/cinder/volumes
+---
+> #volumes_dir=$state_path/volumes
+2376c2376
+< connection=mysql://cinder:dbpass@osc/cinder
+---
+> #connection=<None>
+2565c2565
+< auth_uri=http://osc:5000/v2.0
+---
+> #auth_uri=<None>
+2570c2570
+< identity_uri=http://osc:35357
+---
+> #identity_uri=<None>
+2598c2598
+< admin_user=cinder
+---
+> #admin_user=<None>
+2601c2601
+< admin_password=cinderpass
+---
+> #admin_password=<None>
+2605c2605
+< admin_tenant_name=service
+---
+> #admin_tenant_name=admin
 
+
+
+[root@osc ~]# rabbitmqctl change_password guest rabbitpass
+Changing password for user "guest" ...
+...done.
+
+
+
+Cinderデータベースの初期設定
+[root@osc ~]# su -s /bin/sh -c "cinder-manage db sync" cinder
+
+
+
+LVMインストール、自動起動ON、サービス開始
+[root@osc ~]# yum install -y lvm2
+[root@osc ~]# systemctl enable lvm2-lvmetad.service
+ln -s '/usr/lib/systemd/system/lvm2-lvmetad.service' '/etc/systemd/system/sysinit.target.wants/lvm2-lvmetad.service'
+[root@osc ~]# systemctl start lvm2-lvmetad.service
+
+
+cinder-volumes作成
+[root@osc ~]# pvcreate /dev/sdb
+  Physical volume "/dev/sdb" successfully created
+[root@osc ~]# vgcreate cinder-volumes /dev/sdb
+  Volume group "cinder-volumes" successfully created
+  
+[root@osc ~]# pvdisplay
+  --- Physical volume ---
+  PV Name               /dev/sdb
+  VG Name               cinder-volumes
+  PV Size               20.00 GiB / not usable 4.00 MiB
+  Allocatable           yes
+  PE Size               4.00 MiB
+  Total PE              5119
+  Free PE               5119
+  Allocated PE          0
+  PV UUID               hqs8Ru-XGRR-AduW-LedY-R0tm-yNcB-MMUHki
+
+[root@osc ~]# vgdisplay
+  --- Volume group ---
+  VG Name               cinder-volumes
+  System ID
+  Format                lvm2
+  Metadata Areas        1
+  Metadata Sequence No  1
+  VG Access             read/write
+  VG Status             resizable
+  MAX LV                0
+  Cur LV                0
+  Open LV               0
+  Max PV                0
+  Cur PV                1
+  Act PV                1
+  VG Size               20.00 GiB
+  PE Size               4.00 MiB
+  Total PE              5119
+  Alloc PE / Size       0 / 0
+  Free  PE / Size       5119 / 20.00 GiB
+  VG UUID               SMWi7R-stUp-V27i-f2eF-bW1X-KDAP-eMV3xU
+
+
+
+サービス自動起動ON、サービス開始
+[root@osc ~]# systemctl enable openstack-cinder-api.service openstack-cinder-scheduler.service
+ln -s '/usr/lib/systemd/system/openstack-cinder-api.service' '/etc/systemd/system/multi-user.target.wants/openstack-cinder-api.service'
+ln -s '/usr/lib/systemd/system/openstack-cinder-scheduler.service' '/etc/systemd/system/multi-user.target.wants/openstack-cinder-scheduler.service'
+[root@osc ~]# systemctl start openstack-cinder-api.service openstack-cinder-scheduler.service
+
+[root@osc ~]# systemctl enable openstack-cinder-volume.service target.service
+ln -s '/usr/lib/systemd/system/openstack-cinder-volume.service' '/etc/systemd/system/multi-user.target.wants/openstack-cinder-volume.service'
+ln -s '/usr/lib/systemd/system/target.service' '/etc/systemd/system/multi-user.target.wants/target.service'
+[root@osc ~]# systemctl start openstack-cinder-volume.service target.service
+
+
+
+Cinderテスト
+[root@osc ~]# source opst_admin
+[root@osc ~]# cinder service-list
++------------------+------+------+---------+-------+----------------------------+-----------------+
+|      Binary      | Host | Zone |  Status | State |         Updated_at         | Disabled Reason |
++------------------+------+------+---------+-------+----------------------------+-----------------+
+| cinder-scheduler | osc  | nova | enabled |   up  | 2015-06-19T16:57:42.000000 |       None      |
+|  cinder-volume   | osc  | nova | enabled |   up  | 2015-06-19T16:57:48.000000 |       None      |
++------------------+------+------+---------+-------+----------------------------+-----------------+
+
+[root@osc ~]# source opst_test
+[root@osc ~]# cinder create --display-name demo-volume1 1
++---------------------+--------------------------------------+
+|       Property      |                Value                 |
++---------------------+--------------------------------------+
+|     attachments     |                  []                  |
+|  availability_zone  |                 nova                 |
+|       bootable      |                false                 |
+|      created_at     |      2015-06-19T17:18:17.009957      |
+| display_description |                 None                 |
+|     display_name    |             demo-volume1             |
+|      encrypted      |                False                 |
+|          id         | a3ed5a81-00dd-456b-9ee8-5a454d1f6d52 |
+|       metadata      |                  {}                  |
+|         size        |                  1                   |
+|     snapshot_id     |                 None                 |
+|     source_volid    |                 None                 |
+|        status       |               creating               |
+|     volume_type     |                 None                 |
++---------------------+--------------------------------------+
+[root@osc ~]# cinder list
++--------------------------------------+-----------+--------------+------+-------------+----------+-------------+
+|                  ID                  |   Status  | Display Name | Size | Volume Type | Bootable | Attached to |
++--------------------------------------+-----------+--------------+------+-------------+----------+-------------+
+| a3ed5a81-00dd-456b-9ee8-5a454d1f6d52 | available | demo-volume1 |  1   |     None    |  false   |             |
++--------------------------------------+-----------+--------------+------+-------------+----------+-------------+
+
+ココらへん経験上ハマるかと思ったが、意外とうまくいった。
+
+
+
+
+
+06: Horizonのセットアップ
+インストール
+[root@osc ~]# yum install -y openstack-dashboard httpd mod_wsgi memcached python-memcached
+
+
+設定
+[root@osc ~]# cp /etc/openstack-dashboard/local_settings /etc/openstack-dashboard/local_settings.org
+[root@osc ~]# vim /etc/openstack-dashboard/local_settings
+[root@osc ~]# diff /etc/openstack-dashboard/local_settings /etc/openstack-dashboard/local_settings.org
+15c15
+< ALLOWED_HOSTS = ['*']
+---
+> ALLOWED_HOSTS = ['horizon.example.com', 'localhost']
+112,115c112,114
+<    'default': {
+<        'BACKEND': 'django.core.cache.backends.memcached.MemcachedCache',
+<        'LOCATION': '127.0.0.1:11211',
+<    }
+---
+>     'default': {
+>         'BACKEND': 'django.core.cache.backends.locmem.LocMemCache'
+>     }
+135c134
+< OPENSTACK_HOST = "osc"
+---
+> OPENSTACK_HOST = "127.0.0.1"
+256c255
+< TIME_ZONE = "Japan"
+---
+> TIME_ZONE = "UTC"
+
+
+
+権限付与
+[root@osc ~]# chown -R apache:apache /usr/share/openstack-dashboard/static
+
+
+
+サービス自動起動ON、サービス開始
+[root@osc ~]# systemctl enable httpd.service memcached.service
+ln -s '/usr/lib/systemd/system/memcached.service' '/etc/systemd/system/multi-user.target.wants/memcached.service'
+[root@osc ~]# systemctl start httpd.service memcached.service
+
+
+http://<ControllerのIPアドレス>/dashboard/ へアクセス！
